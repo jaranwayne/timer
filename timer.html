@@ -3,192 +3,133 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>2-Min Countdown</title>
+  <title>2-Min Progress with Reset</title>
   <style>
     :root {
       color-scheme: light dark;
       --bg: #0e1117;
-      --fg: #e6edf3;
-      --accent: #3fb950;
-      --muted: #8b949e;
+      --bar-bg: rgba(127,127,127,0.25);
+      --bar-fg: #3fb950;
+      --btn-bg: rgba(127,127,127,0.18);
+      --btn-fg: #e6edf3;
+      --btn-border: rgba(127,127,127,0.35);
+      --btn-bg-hover: rgba(127,127,127,0.28);
     }
     @media (prefers-color-scheme: light) {
-      :root { --bg: #ffffff; --fg: #111827; --accent: #2563eb; --muted: #6b7280; }
+      :root {
+        --bg: #ffffff;
+        --bar-bg: rgba(0,0,0,0.12);
+        --bar-fg: #2563eb;
+        --btn-bg: rgba(0,0,0,0.04);
+        --btn-fg: #111827;
+        --btn-border: rgba(0,0,0,0.18);
+        --btn-bg-hover: rgba(0,0,0,0.08);
+      }
     }
     html, body {
       height: 100%;
       margin: 0;
-      font-family: ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
       background: var(--bg);
-      color: var(--fg);
     }
     .wrap {
       min-height: 100%;
       display: grid;
       place-items: center;
-      padding: 24px;
+      padding: 16px;
     }
-    .card {
-      width: min(520px, 96vw);
-      border-radius: 12px;
-      padding: 32px 24px;
-      background: rgba(127,127,127,0.08);
-      backdrop-filter: blur(4px);
-      border: 1px solid rgba(127,127,127,0.25);
-      box-shadow: 0 6px 20px rgba(0,0,0,0.18);
-    }
-    .time {
-      font-variant-numeric: tabular-nums;
-      font-weight: 700;
-      font-size: clamp(40px, 14vw, 92px);
-      letter-spacing: 0.04em;
-      text-align: center;
-    }
-    .desc {
-      text-align: center;
-      color: var(--muted);
-      margin-top: 8px;
-      font-size: 14px;
-    }
-    .actions {
-      margin-top: 22px;
+    /* 横向布局：左侧按钮，右侧进度条；在窄屏自动换行 */
+    .row {
       display: flex;
+      align-items: center;
       gap: 12px;
-      justify-content: center;
+      width: min(820px, 96vw);
       flex-wrap: wrap;
+      justify-content: center; /* 居中整个行以适配 Notion */
     }
-    button {
+    .controls {
+      display: flex;
+      flex: 0 0 auto;
+    }
+    button.reset {
       appearance: none;
-      border: 1px solid transparent;
+      border: 1px solid var(--btn-border);
+      background: var(--btn-bg);
+      color: var(--btn-fg);
       border-radius: 10px;
-      padding: 10px 14px;
+      padding: 8px 12px;
       font-size: 14px;
       font-weight: 600;
       cursor: pointer;
-      background: var(--accent);
-      color: white;
+      user-select: none;
+      transition: background .15s ease, transform .02s ease;
     }
-    button.secondary {
-      background: transparent;
-      color: var(--fg);
-      border-color: rgba(127,127,127,0.35);
-    }
+    button.reset:hover { background: var(--btn-bg-hover); }
+    button.reset:active { transform: translateY(1px); }
+    /* 进度条容器尽量占据剩余空间 */
     .progress {
-      height: 8px;
-      width: 100%;
-      background: rgba(127,127,127,0.25);
+      flex: 1 1 520px;
+      height: 10px;
       border-radius: 999px;
+      background: var(--bar-bg);
       overflow: hidden;
-      margin-top: 18px;
+      min-width: 240px;
     }
     .bar {
       height: 100%;
       width: 0%;
-      background: var(--accent);
-      transition: width 0.2s linear;
-    }
-    .hint {
-      margin-top: 10px;
-      text-align: center;
-      font-size: 12px;
-      color: var(--muted);
-      user-select: none;
+      background: var(--bar-fg);
+      transition: width 0.1s linear;
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="card" role="group" aria-label="Two-minute countdown">
-      <div id="time" class="time">02:00</div>
-      <div class="desc">每次加载页面开始 2 分钟倒计时</div>
-      <div class="progress" aria-hidden="true"><div id="bar" class="bar"></div></div>
-      <div class="actions">
-        <button id="restartBtn" title="重新开始">Restart</button>
-        <button id="pauseBtn" class="secondary" title="暂停/继续">Pause</button>
+    <div class="row">
+      <div class="controls">
+        <button id="resetBtn" class="reset" title="重置为两分钟并重新开始">重置</button>
+      </div>
+      <div class="progress" role="progressbar" aria-label="Two-minute progress">
+        <div id="bar" class="bar"></div>
       </div>
     </div>
   </div>
 
   <script>
-    // 总时长（秒）
-    const TOTAL = 120;
-    let startTs = null;
-    let paused = false;
-    let pauseOffset = 0; // 已经经过的时间（秒）
+    const TOTAL = 120; // 总时长（秒）
+    let startTs = performance.now();
     let rafId = null;
 
-    const timeEl = document.getElementById('time');
     const barEl = document.getElementById('bar');
-    const restartBtn = document.getElementById('restartBtn');
-    const pauseBtn = document.getElementById('pauseBtn');
+    const resetBtn = document.getElementById('resetBtn');
 
-    function format(sec) {
-      const m = Math.floor(sec / 60);
-      const s = Math.floor(sec % 60);
-      return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
-    }
-
-    function render(remain) {
-      timeEl.textContent = format(remain);
-      const p = Math.max(0, Math.min(1, (TOTAL - remain) / TOTAL));
-      barEl.style.width = `${p * 100}%`;
-      if (remain <= 0) {
-        timeEl.textContent = "Time’s up!";
-        pauseBtn.disabled = true;
-      } else {
-        pauseBtn.disabled = false;
-      }
-    }
-
-    function tick() {
-      if (paused) return;
+    function render() {
       const now = performance.now();
-      const elapsed = (now - startTs) / 1000 + pauseOffset;
-      const remain = Math.max(0, TOTAL - elapsed);
-      render(remain);
-      if (remain > 0) {
-        rafId = requestAnimationFrame(tick);
+      const elapsed = (now - startTs) / 1000;
+      const p = Math.max(0, Math.min(1, elapsed / TOTAL));
+      barEl.style.width = `${p * 100}%`;
+      if (p < 1) {
+        rafId = requestAnimationFrame(render);
+      } else {
+        barEl.style.width = '100%';
+        rafId = null;
       }
     }
 
     function start() {
-      cancelAnimationFrame(rafId);
+      if (rafId) cancelAnimationFrame(rafId);
       startTs = performance.now();
-      paused = false;
-      pauseOffset = 0;
-      render(TOTAL);
-      rafId = requestAnimationFrame(tick);
+      barEl.style.width = '0%';
+      rafId = requestAnimationFrame(render);
     }
 
-    function restart() {
-      start();
+    function reset() {
+      start(); // 重置并重新开始两分钟
     }
 
-    function togglePause() {
-      if (!paused) {
-        paused = true;
-        // 记录已经过的时间
-        const now = performance.now();
-        pauseOffset += (now - startTs) / 1000;
-        pauseBtn.textContent = "Resume";
-      } else {
-        paused = false;
-        startTs = performance.now();
-        pauseBtn.textContent = "Pause";
-        rafId = requestAnimationFrame(tick);
-      }
-    }
+    resetBtn.addEventListener('click', reset);
 
-    // 初次加载即开始两分钟
+    // 页面加载即开始
     start();
-
-    restartBtn.addEventListener('click', restart);
-    pauseBtn.addEventListener('click', togglePause);
-
-    // 适配在 iframe 中的键盘无焦点情况
-    window.addEventListener('visibilitychange', () => {
-      // 仅为了在切换标签时保持时间进度正确，逻辑已基于 performance.now() 无需特殊处理
-    });
   </script>
 </body>
 </html>
